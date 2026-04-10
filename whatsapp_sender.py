@@ -1,6 +1,7 @@
 import os
 import time
 import urllib.parse
+import platform
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -10,10 +11,15 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 
 from utils import format_phone_number, substitute_template
 
 PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile")
+
+# Detect if running on Streamlit Cloud
+def _is_streamlit_cloud():
+    return os.path.exists('/mount/src') or platform.system() == 'Linux' and 'STREAMLIT' in os.environ.get('HOME', '')
 
 _MSG_SELECTORS = [
     'div[contenteditable="true"][data-tab="10"]',
@@ -28,23 +34,71 @@ _LOGGED_IN_SELECTOR = '[data-testid="chat-list"], [data-testid="default-user"], 
 
 def _build_driver() -> webdriver.Chrome:
     options = Options()
-    options.add_argument(f"--user-data-dir={PROFILE_DIR}")
-    options.add_argument("--profile-directory=Default")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
+    
+    # Detect environment
+    is_cloud = _is_streamlit_cloud()
+    
+    if is_cloud:
+        # Streamlit Cloud configuration
+        options.binary_location = '/usr/bin/chromium'
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-features=NetworkService')
+        options.add_argument('--disable-features=VizDisplayCompositor')
+        options.add_argument('--window-size=1920x1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        
+        # Use temp directory for profile on cloud
+        temp_profile = "/tmp/chrome_profile"
+        os.makedirs(temp_profile, exist_ok=True)
+        options.add_argument(f"--user-data-dir={temp_profile}")
+    else:
+        # Local configuration
+        options.add_argument(f"--user-data-dir={PROFILE_DIR}")
+        options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+    
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=Options() if False else options,
-    )
-    driver.maximize_window()
+    
+    if is_cloud:
+        # Use chromium-driver on Streamlit Cloud
+        service = Service('/usr/bin/chromedriver')
+        driver = webdriver.Chrome(service=service, options=options)
+    else:
+        # Use ChromeDriverManager locally
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()),
+            options=options,
+        )
+    
+    if not is_cloud:
+        driver.maximize_window()
+    
     return driver
 
 
-def _wait_for_login(driver: webdriver.Chrome, timeout: int = 90):
+def _wait_for_login(driver: webdriver.Chrome, timeout: int = 90, qr_callback=None):
     """Block until WhatsApp Web shows the chat list (QR scanned)."""
+    # Try to capture QR code for display
+    if qr_callback and _is_streamlit_cloud():
+        try:
+            # Wait a bit for QR code to appear
+            time.sleep(3)
+            qr_element = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'canvas[aria-label="Scan me!"], div[data-ref]'))
+            )
+            # Take screenshot and pass to callback
+            screenshot_path = "/tmp/whatsapp_qr.png"
+            driver.save_screenshot(screenshot_path)
+            qr_callback(screenshot_path)
+        except Exception as e:
+            print(f"Could not capture QR code: {e}")
+    
     WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
     )
@@ -69,7 +123,7 @@ class WhatsAppSender:
         self.qr_timeout          = qr_timeout
         self.driver              = None
 
-    def _open_driver(self, status_cb=None):
+    def _open_driver(self, status_cb=None, qr_callback=None):
         if self.driver is None:
             if status_cb:
                 status_cb("Opening WhatsApp Web…")
@@ -85,8 +139,8 @@ class WhatsAppSender:
                     status_cb("Already logged in — starting to send…")
             except Exception:
                 if status_cb:
-                    status_cb("Scan the QR code in the Chrome window to continue…")
-                _wait_for_login(self.driver, self.qr_timeout)
+                    status_cb("Scan the QR code to continue…")
+                _wait_for_login(self.driver, self.qr_timeout, qr_callback=qr_callback)
                 if status_cb:
                     status_cb("QR scanned! Starting to send messages…")
 
@@ -118,8 +172,8 @@ class WhatsAppSender:
         except Exception as exc:
             return {"contact": contact_name, "number": str(phone), "status": "failed", "error": str(exc)}
 
-    def send_batch(self, df, template: str, progress_callback=None, status_cb=None) -> list:
-        self._open_driver(status_cb=status_cb)
+    def send_batch(self, df, template: str, progress_callback=None, status_cb=None, qr_callback=None) -> list:
+        self._open_driver(status_cb=status_cb, qr_callback=qr_callback)
         results = []
         total   = len(df)
         try:

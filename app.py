@@ -185,9 +185,10 @@ st.markdown('<div class="section-label">05 — Send</div>', unsafe_allow_html=Tr
 
 st.info(
     "When you click **Send**:\n"
-    "1. A Chrome window opens with WhatsApp Web\n"
-    "2. Scan the QR code with your phone\n"
-    "3. Messages will start sending automatically — do not close or minimise Chrome"
+    "1. WhatsApp Web will open (in headless mode on cloud)\n"
+    "2. If not logged in, a QR code will appear below — scan it with your WhatsApp mobile app\n"
+    "3. Messages will start sending automatically\n"
+    "4. ⚠️ On Streamlit Cloud, you'll need to scan the QR code each time (sessions don't persist)"
 )
 
 send_ready = df is not None and template.strip() != ""
@@ -202,6 +203,7 @@ if st.button("SEND TO ALL CONTACTS", type="primary", disabled=not send_ready):
 
     progress_bar        = st.progress(0.0)
     status_text         = st.empty()
+    qr_code_placeholder = st.empty()
     results_placeholder = st.empty()
     all_results         = []
 
@@ -217,11 +219,16 @@ if st.button("SEND TO ALL CONTACTS", type="primary", disabled=not send_ready):
             pd.DataFrame(all_results)[["contact", "number", "status", "error"]],
             width="stretch",
         )
+    
+    def on_qr_code(screenshot_path):
+        """Display QR code screenshot for scanning"""
+        qr_code_placeholder.image(screenshot_path, caption="Scan this QR code with your WhatsApp mobile app", width=400)
 
     sender.send_batch(
         df, template,
         progress_callback=on_progress,
         status_cb=lambda msg: status_text.info(msg),
+        qr_callback=on_qr_code,
     )
 
     results_df = pd.DataFrame(all_results)
