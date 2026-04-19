@@ -158,28 +158,32 @@ def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=No
                 print("DEBUG: Successfully detected login!")
                 return
 
-            # Look for QR code
-            qr_elements = driver.find_elements(By.CSS_SELECTOR, _QR_SELECTOR)
-            if qr_elements:
-                if not qr_shown:
-                    print(f"DEBUG: Found QR element using selector. Capturing...")
-                    if status_cb:
-                        status_cb("📱 Scan the QR code below with your WhatsApp mobile app…")
-                    qr_shown = True
+            # Capture whatever is on the screen to ensure the user sees the QR code
+            # even if our selectors fail to find the specific element.
+            try:
+                driver.save_screenshot(screenshot_path)
+                if qr_callback:
+                    qr_callback(screenshot_path)
                 
-                # Refresh QR screenshot
-                try:
-                    driver.save_screenshot(screenshot_path)
-                    if qr_callback:
-                        qr_callback(screenshot_path)
-                    print(f"DEBUG: QR screenshot updated at {time.strftime('%H:%M:%S')}")
-                except Exception as e:
-                    print(f"DEBUG: Failed to save screenshot: {e}")
-            else:
                 if not qr_shown:
-                    print("DEBUG: Still waiting for QR element to appear on page...")
+                    print(f"DEBUG: Starting screenshot stream. Check the app UI.")
+                    if status_cb:
+                        status_cb("📱 Look at the image below — Scan the QR code when it appears.")
+                    qr_shown = True
+            except Exception as e:
+                print(f"DEBUG: Failed to capture fallback screenshot: {e}")
 
-            time.sleep(3)
+            # Check for common retry/error buttons
+            for retry_sel in ['div[role="button"]', 'button']:
+                try:
+                    btns = driver.find_elements(By.CSS_SELECTOR, retry_sel)
+                    for b in btns:
+                        if "retry" in b.text.lower() or "click to reload" in b.text.lower():
+                            print("DEBUG: Found a 'Retry' button. You might need to refresh the page.")
+                except Exception:
+                    pass
+
+            time.sleep(5)
 
         except Exception as e:
             err_lower = str(e).lower()
