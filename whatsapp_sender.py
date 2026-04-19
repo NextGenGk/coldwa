@@ -69,14 +69,16 @@ def _build_driver() -> webdriver.Chrome:
     
     if is_cloud:
         # Streamlit Cloud configuration
-        options.binary_location = '/usr/bin/chromium'
-        options.add_argument('--headless')
+        # Try common paths for chromium binary
+        for path in ['/usr/bin/chromium', '/usr/bin/chromium-browser']:
+            if os.path.exists(path):
+                options.binary_location = path
+                break
+        
+        options.add_argument('--headless=new') # Modern headless mode
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('--disable-features=NetworkService')
-        options.add_argument('--disable-features=VizDisplayCompositor')
-        options.add_argument('--window-size=1920x1080')
         options.add_argument('--disable-blink-features=AutomationControlled')
         
         # Use temp directory for profile on cloud
@@ -98,12 +100,17 @@ def _build_driver() -> webdriver.Chrome:
         _clear_chrome_locks(PROFILE_DIR)
 
     if is_cloud:
-        # Use chromium-driver on Streamlit Cloud
-        service = Service('/usr/bin/chromedriver')
+        # Try starting with the default service paths first, then fallback to fixed path
         try:
-            driver = webdriver.Chrome(service=service, options=options)
-        except Exception as e:
-            raise RuntimeError(f"Failed to start Chrome: {e}")
+            # First attempt: let Selenium find the driver in PATH
+            driver = webdriver.Chrome(options=options)
+        except Exception:
+            try:
+                # Second attempt: try the standard linux path
+                service = Service('/usr/bin/chromedriver')
+                driver = webdriver.Chrome(service=service, options=options)
+            except Exception as e:
+                raise RuntimeError(f"Failed to start Chrome on Cloud: {e}. Check if 'chromium' and 'chromium-driver' are in packages.txt.")
     else:
         # Use ChromeDriverManager locally
         try:
