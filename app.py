@@ -198,7 +198,7 @@ if st.button("SEND TO ALL CONTACTS", type="primary", disabled=not send_ready):
         wait_time=int(wait_time),
         inter_message_delay=int(inter_delay),
         default_cc=default_cc,
-        qr_timeout=90,
+        qr_timeout=180,
     )
 
     progress_bar        = st.progress(0.0)

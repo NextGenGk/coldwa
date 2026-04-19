@@ -26,10 +26,39 @@ _MSG_SELECTORS = [
     'div[contenteditable="true"][role="textbox"]',
     'footer div[contenteditable="true"]',
     'div[title="Type a message"]',
+    'div[data-testid="conversation-compose-box-input"]',
+    'div[data-testid="conversation-text-input"]',
 ]
 
 # Present only when fully logged in
-_LOGGED_IN_SELECTOR = '[data-testid="chat-list"], [data-testid="default-user"], div[aria-label="Chat list"]'
+_LOGGED_IN_SELECTOR = (
+    '[data-testid="chat-list"], '
+    '[data-testid="default-user"], '
+    'div[aria-label="Chat list"], '
+    '[data-testid="search"], '
+    '[data-testid="intro-text"], '
+    '[data-icon="chat"]'
+)
+
+def _clear_chrome_locks(profile_dir):
+    """Try to remove Chrome lock files if they exist."""
+    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        lock_path = os.path.join(profile_dir, lock)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except Exception:
+                pass
+    # Also check Default/ subdirectory
+    default_dir = os.path.join(profile_dir, "Default")
+    if os.path.exists(default_dir):
+        for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            lock_path = os.path.join(default_dir, lock)
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
 
 
 def _build_driver() -> webdriver.Chrome:
@@ -65,16 +94,30 @@ def _build_driver() -> webdriver.Chrome:
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     
+    if not is_cloud:
+        _clear_chrome_locks(PROFILE_DIR)
+
     if is_cloud:
         # Use chromium-driver on Streamlit Cloud
         service = Service('/usr/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=options)
+        try:
+            driver = webdriver.Chrome(service=service, options=options)
+        except Exception as e:
+            raise RuntimeError(f"Failed to start Chrome: {e}")
     else:
         # Use ChromeDriverManager locally
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=options,
-        )
+        try:
+            driver = webdriver.Chrome(
+                service=Service(ChromeDriverManager().install()),
+                options=options,
+            )
+        except Exception as e:
+            if "user data directory is already in use" in str(e).lower():
+                raise RuntimeError(
+                    "WhatsApp Chrome window is already open. Please close any other "
+                    "Chrome windows opened by this app and try again."
+                ) from e
+            raise e
     
     if not is_cloud:
         driver.maximize_window()
@@ -85,23 +128,36 @@ def _build_driver() -> webdriver.Chrome:
 def _wait_for_login(driver: webdriver.Chrome, timeout: int = 90, qr_callback=None):
     """Block until WhatsApp Web shows the chat list (QR scanned)."""
     # Try to capture QR code for display
-    if qr_callback and _is_streamlit_cloud():
+    if qr_callback:
         try:
-            # Wait a bit for QR code to appear
-            time.sleep(3)
-            qr_element = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'canvas[aria-label="Scan me!"], div[data-ref]'))
-            )
-            # Take screenshot and pass to callback
-            screenshot_path = "/tmp/whatsapp_qr.png"
-            driver.save_screenshot(screenshot_path)
-            qr_callback(screenshot_path)
+            # Short wait to see if we're already logged in or need to show QR
+            for _ in range(10):  # 5 seconds polling
+                if driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
+                    return
+                # Check for QR code
+                qr_elements = driver.find_elements(By.CSS_SELECTOR, 'canvas[aria-label="Scan me!"], div[data-ref]')
+                if qr_elements:
+                    # Take screenshot and pass to callback
+                    screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wa_qr.png")
+                    if _is_streamlit_cloud():
+                        screenshot_path = "/tmp/whatsapp_qr.png"
+                    
+                    driver.save_screenshot(screenshot_path)
+                    qr_callback(screenshot_path)
+                    break
+                time.sleep(0.5)
         except Exception as e:
-            print(f"Could not capture QR code: {e}")
+            print(f"DEBUG: QR capture info: {e}")
     
-    WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
-    )
+    # Wait for the logged-in state
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
+        )
+    except Exception as e:
+        # One last check for any logged-in element before failing
+        if not driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
+            raise e
 
 
 def _find_message_box(driver: webdriver.Chrome, timeout: int):
