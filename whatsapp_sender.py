@@ -34,10 +34,18 @@ _LOGGED_IN_SELECTOR = (
     '[data-testid="chat-list"], '
     '[data-testid="default-user"], '
     'div[aria-label="Chat list"], '
-    '[data-testid="search"]'
+    '[data-testid="search"], '
+    '[data-testid="intro-text"], '
+    '[data-icon="chat"],'
+    '#side'
 )
 
-_QR_SELECTOR = 'div[data-ref], canvas[aria-label="Scan me!"], div[data-testid="qrcode"]'
+_QR_SELECTOR = (
+    'div[data-ref], '
+    'canvas[aria-label="Scan me!"], '
+    'div[data-testid="qrcode"], '
+    'canvas'
+)
 
 
 def _clear_chrome_locks(profile_dir):
@@ -147,21 +155,29 @@ def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=No
         try:
             # Check if already logged in
             if driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
+                print("DEBUG: Successfully detected login!")
                 return
 
             # Look for QR code
-            qr_present = driver.find_elements(By.CSS_SELECTOR, _QR_SELECTOR)
-            if qr_present:
-                if not qr_shown and status_cb:
-                    status_cb("📱 Scan the QR code below with your WhatsApp mobile app…")
+            qr_elements = driver.find_elements(By.CSS_SELECTOR, _QR_SELECTOR)
+            if qr_elements:
+                if not qr_shown:
+                    print(f"DEBUG: Found QR element using selector. Capturing...")
+                    if status_cb:
+                        status_cb("📱 Scan the QR code below with your WhatsApp mobile app…")
                     qr_shown = True
-                # Refresh QR screenshot every 3 seconds
+                
+                # Refresh QR screenshot
                 try:
                     driver.save_screenshot(screenshot_path)
                     if qr_callback:
                         qr_callback(screenshot_path)
-                except Exception:
-                    pass
+                    print(f"DEBUG: QR screenshot updated at {time.strftime('%H:%M:%S')}")
+                except Exception as e:
+                    print(f"DEBUG: Failed to save screenshot: {e}")
+            else:
+                if not qr_shown:
+                    print("DEBUG: Still waiting for QR element to appear on page...")
 
             time.sleep(3)
 
