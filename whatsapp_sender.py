@@ -88,14 +88,10 @@ def _build_driver() -> webdriver.Chrome:
         for arg in cloud_args:
             options.add_argument(arg)
 
-        # Block images to save memory — WhatsApp Web loads many media files
-        prefs = {
-            "profile.default_content_setting_values.images": 2,  # 2 = block
-            "profile.managed_default_content_settings.images": 2,
-        }
-        options.add_experimental_option("prefs", prefs)
-
-        temp_profile = "/tmp/chrome_profile_wa"
+        # Re-enable images to ensure QR code is captured
+        # Use a unique temp profile per run to avoid conflicts
+        import uuid
+        temp_profile = f"/tmp/chrome_profile_{uuid.uuid4()}"
         os.makedirs(temp_profile, exist_ok=True)
         options.add_argument(f"--user-data-dir={temp_profile}")
 
