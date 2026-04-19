@@ -3,4 +3,3 @@ chromium-driver
 libnss3
 libfontconfig1
 libgbm1
-libasound2
