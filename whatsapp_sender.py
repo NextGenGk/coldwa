@@ -75,11 +75,15 @@ def _build_driver() -> webdriver.Chrome:
         if chrome_path:
             options.binary_location = chrome_path
         
-        options.add_argument('--headless') # Try standard headless if 'new' fails
+        options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('--remote-debugging-port=9222')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-infobars')
+        options.add_argument('--no-first-run')
+        options.add_argument('--password-store=basic')
+        options.add_argument('--use-gl=swiftshader')
         options.add_argument('--disable-blink-features=AutomationControlled')
         
         # Use temp directory for profile on cloud
@@ -163,9 +167,17 @@ def _wait_for_login(driver: webdriver.Chrome, timeout: int = 90, qr_callback=Non
             EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
         )
     except Exception as e:
-        # One last check for any logged-in element before failing
-        if not driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
-            raise e
+        # Check if browser is still alive before trying to find elements
+        try:
+            if not driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
+                raise e
+        except Exception:
+            # If the session is dead (InvalidSessionIdException), provide a clean error
+            raise RuntimeError(
+                "The browser session crashed or was closed unexpectedly. "
+                "This usually happens on Streamlit Cloud due to memory limits. "
+                "Please try again in a few moments."
+            ) from e
 
 
 def _find_message_box(driver: webdriver.Chrome, timeout: int):
