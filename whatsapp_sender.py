@@ -69,22 +69,23 @@ def _build_driver() -> webdriver.Chrome:
     
     if is_cloud:
         # Streamlit Cloud configuration
-        # Try common paths for chromium binary
-        for path in ['/usr/bin/chromium', '/usr/bin/chromium-browser']:
-            if os.path.exists(path):
-                options.binary_location = path
-                break
+        import shutil
+        # Try to find chromium binary automatically
+        chrome_path = shutil.which('chromium') or shutil.which('chromium-browser') or shutil.which('google-chrome')
+        if chrome_path:
+            options.binary_location = chrome_path
         
-        options.add_argument('--headless=new') # Modern headless mode
+        options.add_argument('--headless') # Try standard headless if 'new' fails
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
+        options.add_argument('--remote-debugging-port=9222')
         options.add_argument('--disable-blink-features=AutomationControlled')
         
         # Use temp directory for profile on cloud
         temp_profile = "/tmp/chrome_profile"
         os.makedirs(temp_profile, exist_ok=True)
-        options.add_argument(f"--user-data-dir={temp_profile}")
+        # options.add_argument(f"--user-data-dir={temp_profile}") # Temporarily disable to test
     else:
         # Local configuration
         options.add_argument(f"--user-data-dir={PROFILE_DIR}")
@@ -100,17 +101,17 @@ def _build_driver() -> webdriver.Chrome:
         _clear_chrome_locks(PROFILE_DIR)
 
     if is_cloud:
-        # Try starting with the default service paths first, then fallback to fixed path
         try:
-            # First attempt: let Selenium find the driver in PATH
-            driver = webdriver.Chrome(options=options)
-        except Exception:
-            try:
-                # Second attempt: try the standard linux path
-                service = Service('/usr/bin/chromedriver')
+            # Try finding chromedriver in PATH via shutil.which
+            chromedriver_path = shutil.which('chromedriver')
+            if chromedriver_path:
+                service = Service(chromedriver_path)
                 driver = webdriver.Chrome(service=service, options=options)
-            except Exception as e:
-                raise RuntimeError(f"Failed to start Chrome on Cloud: {e}. Check if 'chromium' and 'chromium-driver' are in packages.txt.")
+            else:
+                # Fallback to absolute path or just default
+                driver = webdriver.Chrome(options=options)
+        except Exception as e:
+            raise RuntimeError(f"Failed to start Chrome on Cloud: {e}. Binary: {options.binary_location}, Driver: {shutil.which('chromedriver') or 'Not in PATH'}")
     else:
         # Use ChromeDriverManager locally
         try:
