@@ -11,15 +11,15 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 
 from utils import format_phone_number, substitute_template
 
 PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile")
 
-# Detect if running on Streamlit Cloud
 def _is_streamlit_cloud():
-    return os.path.exists('/mount/src') or platform.system() == 'Linux' and 'STREAMLIT' in os.environ.get('HOME', '')
+    """Detect Streamlit Cloud environment."""
+    return os.path.exists('/mount/src')
+
 
 _MSG_SELECTORS = [
     'div[contenteditable="true"][data-tab="10"]',
@@ -27,7 +27,6 @@ _MSG_SELECTORS = [
     'footer div[contenteditable="true"]',
     'div[title="Type a message"]',
     'div[data-testid="conversation-compose-box-input"]',
-    'div[data-testid="conversation-text-input"]',
 ]
 
 # Present only when fully logged in
@@ -35,149 +34,155 @@ _LOGGED_IN_SELECTOR = (
     '[data-testid="chat-list"], '
     '[data-testid="default-user"], '
     'div[aria-label="Chat list"], '
-    '[data-testid="search"], '
-    '[data-testid="intro-text"], '
-    '[data-icon="chat"]'
+    '[data-testid="search"]'
 )
 
+_QR_SELECTOR = 'div[data-ref], canvas[aria-label="Scan me!"], div[data-testid="qrcode"]'
+
+
 def _clear_chrome_locks(profile_dir):
-    """Try to remove Chrome lock files if they exist."""
-    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-        lock_path = os.path.join(profile_dir, lock)
-        if os.path.exists(lock_path):
-            try:
-                os.remove(lock_path)
-            except Exception:
-                pass
-    # Also check Default/ subdirectory
-    default_dir = os.path.join(profile_dir, "Default")
-    if os.path.exists(default_dir):
+    """Remove stale Chrome lock files to prevent 'already in use' errors."""
+    for subdir in [profile_dir, os.path.join(profile_dir, "Default")]:
         for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-            lock_path = os.path.join(default_dir, lock)
-            if os.path.exists(lock_path):
+            path = os.path.join(subdir, lock)
+            if os.path.exists(path):
                 try:
-                    os.remove(lock_path)
+                    os.remove(path)
                 except Exception:
                     pass
 
 
 def _build_driver() -> webdriver.Chrome:
+    import shutil
     options = Options()
-    
-    # Detect environment
     is_cloud = _is_streamlit_cloud()
-    
+
     if is_cloud:
-        # Streamlit Cloud configuration
-        import shutil
-        # Try to find chromium binary automatically
-        chrome_path = shutil.which('chromium') or shutil.which('chromium-browser') or shutil.which('google-chrome')
-        if chrome_path:
-            options.binary_location = chrome_path
-        
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--disable-extensions')
-        options.add_argument('--disable-infobars')
-        options.add_argument('--no-first-run')
-        options.add_argument('--password-store=basic')
-        options.add_argument('--use-gl=swiftshader')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        
-        # Use temp directory for profile on cloud
-        temp_profile = "/tmp/chrome_profile"
+        # Auto-detect chromium binary
+        chrome_bin = (
+            shutil.which('chromium') or
+            shutil.which('chromium-browser') or
+            shutil.which('google-chrome')
+        )
+        if chrome_bin:
+            options.binary_location = chrome_bin
+
+        # Memory-reduced flags (no --single-process or --no-zygote — they crash newer Chrome)
+        cloud_args = [
+            '--headless',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-sync',
+            '--disable-translate',
+            '--no-first-run',
+            '--mute-audio',
+            '--hide-scrollbars',
+            '--window-size=1280,720',
+            '--shm-size=512m',
+        ]
+        for arg in cloud_args:
+            options.add_argument(arg)
+
+        # Block images to save memory — WhatsApp Web loads many media files
+        prefs = {
+            "profile.default_content_setting_values.images": 2,  # 2 = block
+            "profile.managed_default_content_settings.images": 2,
+        }
+        options.add_experimental_option("prefs", prefs)
+
+        temp_profile = "/tmp/chrome_profile_wa"
         os.makedirs(temp_profile, exist_ok=True)
-        # options.add_argument(f"--user-data-dir={temp_profile}") # Temporarily disable to test
+        options.add_argument(f"--user-data-dir={temp_profile}")
+
     else:
         # Local configuration
+        _clear_chrome_locks(PROFILE_DIR)
         options.add_argument(f"--user-data-dir={PROFILE_DIR}")
         options.add_argument("--profile-directory=Default")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-    
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-    
-    if not is_cloud:
-        _clear_chrome_locks(PROFILE_DIR)
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
 
-    if is_cloud:
-        try:
-            # Try finding chromedriver in PATH via shutil.which
-            chromedriver_path = shutil.which('chromedriver')
-            if chromedriver_path:
-                service = Service(chromedriver_path)
-                driver = webdriver.Chrome(service=service, options=options)
-            else:
-                # Fallback to absolute path or just default
-                driver = webdriver.Chrome(options=options)
-        except Exception as e:
-            raise RuntimeError(f"Failed to start Chrome on Cloud: {e}. Binary: {options.binary_location}, Driver: {shutil.which('chromedriver') or 'Not in PATH'}")
-    else:
-        # Use ChromeDriverManager locally
-        try:
+    try:
+        if is_cloud:
+            chromedriver_bin = shutil.which('chromedriver') or '/usr/bin/chromedriver'
+            service = Service(chromedriver_bin)
+            driver = webdriver.Chrome(service=service, options=options)
+        else:
             driver = webdriver.Chrome(
                 service=Service(ChromeDriverManager().install()),
                 options=options,
             )
-        except Exception as e:
-            if "user data directory is already in use" in str(e).lower():
-                raise RuntimeError(
-                    "WhatsApp Chrome window is already open. Please close any other "
-                    "Chrome windows opened by this app and try again."
-                ) from e
-            raise e
-    
+    except Exception as e:
+        err = str(e)
+        if "user data directory is already in use" in err.lower():
+            raise RuntimeError(
+                "WhatsApp Chrome window is already open. "
+                "Close any Chrome windows opened by this app and try again."
+            ) from e
+        raise RuntimeError(f"Failed to start Chrome: {err}") from e
+
     if not is_cloud:
         driver.maximize_window()
-    
+
     return driver
 
 
-def _wait_for_login(driver: webdriver.Chrome, timeout: int = 90, qr_callback=None):
-    """Block until WhatsApp Web shows the chat list (QR scanned)."""
-    # Try to capture QR code for display
-    if qr_callback:
+def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=None, status_cb=None):
+    """
+    Wait until WhatsApp Web is fully logged in.
+    Continuously captures and updates QR code screenshot for the UI.
+    """
+    screenshot_path = "/tmp/whatsapp_qr.png" if _is_streamlit_cloud() else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "wa_qr.png"
+    )
+
+    deadline = time.time() + timeout
+    qr_shown = False
+
+    while time.time() < deadline:
         try:
-            # Short wait to see if we're already logged in or need to show QR
-            for _ in range(10):  # 5 seconds polling
-                if driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
-                    return
-                # Check for QR code
-                qr_elements = driver.find_elements(By.CSS_SELECTOR, 'canvas[aria-label="Scan me!"], div[data-ref]')
-                if qr_elements:
-                    # Take screenshot and pass to callback
-                    screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wa_qr.png")
-                    if _is_streamlit_cloud():
-                        screenshot_path = "/tmp/whatsapp_qr.png"
-                    
+            # Check if already logged in
+            if driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
+                return
+
+            # Look for QR code
+            qr_present = driver.find_elements(By.CSS_SELECTOR, _QR_SELECTOR)
+            if qr_present:
+                if not qr_shown and status_cb:
+                    status_cb("📱 Scan the QR code below with your WhatsApp mobile app…")
+                    qr_shown = True
+                # Refresh QR screenshot every 3 seconds
+                try:
                     driver.save_screenshot(screenshot_path)
-                    qr_callback(screenshot_path)
-                    break
-                time.sleep(0.5)
+                    if qr_callback:
+                        qr_callback(screenshot_path)
+                except Exception:
+                    pass
+
+            time.sleep(3)
+
         except Exception as e:
-            print(f"DEBUG: QR capture info: {e}")
-    
-    # Wait for the logged-in state
-    try:
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
-        )
-    except Exception as e:
-        # Check if browser is still alive before trying to find elements
-        try:
-            if not driver.find_elements(By.CSS_SELECTOR, _LOGGED_IN_SELECTOR):
-                raise e
-        except Exception:
-            # If the session is dead (InvalidSessionIdException), provide a clean error
-            raise RuntimeError(
-                "The browser session crashed or was closed unexpectedly. "
-                "This usually happens on Streamlit Cloud due to memory limits. "
-                "Please try again in a few moments."
-            ) from e
+            err_lower = str(e).lower()
+            if any(k in err_lower for k in ("invalid session", "no such session", "session not created")):
+                raise RuntimeError(
+                    "Chrome crashed (likely out of memory on the cloud server). "
+                    "Please wait a moment and try sending again."
+                ) from e
+            # Other transient errors — keep waiting
+            time.sleep(2)
+
+    raise RuntimeError(
+        f"WhatsApp login timed out after {timeout}s. "
+        "Make sure you scanned the QR code in time."
+    )
 
 
 def _find_message_box(driver: webdriver.Chrome, timeout: int):
@@ -187,12 +192,12 @@ def _find_message_box(driver: webdriver.Chrome, timeout: int):
             return wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
         except Exception:
             continue
-    raise RuntimeError("Message input box not found.")
+    raise RuntimeError("Message input box not found — WhatsApp Web may have changed its layout.")
 
 
 class WhatsAppSender:
     def __init__(self, wait_time: int = 30, inter_message_delay: int = 5,
-                 default_cc: str = "91", qr_timeout: int = 90):
+                 default_cc: str = "91", qr_timeout: int = 180):
         self.wait_time           = wait_time
         self.inter_message_delay = inter_message_delay
         self.default_cc          = default_cc
@@ -202,23 +207,29 @@ class WhatsAppSender:
     def _open_driver(self, status_cb=None, qr_callback=None):
         if self.driver is None:
             if status_cb:
-                status_cb("Opening WhatsApp Web…")
+                status_cb("🌐 Opening WhatsApp Web…")
             self.driver = _build_driver()
             self.driver.get("https://web.whatsapp.com")
+            time.sleep(5)  # Let the page initialise
 
-            # Check if already logged in
+            # Quick check if already logged in
             try:
-                WebDriverWait(self.driver, 6).until(
+                WebDriverWait(self.driver, 8).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, _LOGGED_IN_SELECTOR))
                 )
                 if status_cb:
-                    status_cb("Already logged in — starting to send…")
+                    status_cb("✅ Already logged in — starting to send…")
             except Exception:
                 if status_cb:
-                    status_cb("Scan the QR code to continue…")
-                _wait_for_login(self.driver, self.qr_timeout, qr_callback=qr_callback)
+                    status_cb("📷 Loading QR code — please wait…")
+                _wait_for_login(
+                    self.driver,
+                    timeout=self.qr_timeout,
+                    qr_callback=qr_callback,
+                    status_cb=status_cb,
+                )
                 if status_cb:
-                    status_cb("QR scanned! Starting to send messages…")
+                    status_cb("✅ QR scanned! Starting to send messages…")
 
     def close(self):
         if self.driver:
