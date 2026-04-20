@@ -1,88 +1,157 @@
-# Deployment Guide for Streamlit Cloud
+# AURASUTRA - Desktop WhatsApp Sender
 
-## Prerequisites
-- GitHub account
-- Streamlit Cloud account (free at share.streamlit.io)
+## ⚠️ IMPORTANT: This App Works ONLY on Your Local Computer
 
-## Files Required for Streamlit Cloud
+**Why it won't work on Streamlit Cloud or any web hosting:**
+- WhatsApp Web actively blocks automated/headless browsers
+- Cloud servers can't display real browser windows for QR code scanning
+- WhatsApp requires a persistent browser session with your login
+- The error "WhatsApp works with Google Chrome 85+" means WhatsApp detected automation
 
-### 1. `packages.txt`
-This file tells Streamlit Cloud to install Chromium browser and driver:
-```
-chromium
-chromium-driver
-```
+**Solution:** Run this app locally on your computer using the Desktop App.
 
-### 2. `.streamlit/config.toml`
-Configuration for Streamlit settings (already included)
+---
 
-### 3. `requirements.txt`
-Python dependencies (already included)
+## 🖥️ Desktop App (Recommended)
 
-## Deployment Steps
+### Requirements
+- Windows 10/11 or macOS or Linux
+- Python 3.8+
+- Google Chrome browser installed
 
-1. **Push to GitHub**
+### Installation
+
+1. **Install Python dependencies:**
    ```bash
-   git add .
-   git commit -m "Add Streamlit Cloud support"
-   git push origin main
+   pip install -r requirements.txt
    ```
 
-2. **Deploy on Streamlit Cloud**
-   - Go to https://share.streamlit.io
-   - Click "New app"
-   - Select your repository
-   - Set main file path: `app.py`
-   - Click "Deploy"
+2. **Run the desktop app:**
+   ```bash
+   python desktop_app.py
+   ```
 
-3. **First Use on Cloud**
-   - Click "Send" button
-   - Wait for QR code to appear in the app
-   - Scan QR code with your WhatsApp mobile app
-   - Messages will start sending
+### First Time Setup
+1. The app will open a Chrome browser window
+2. WhatsApp Web will load and show a QR code
+3. Open WhatsApp on your phone → Settings → Linked Devices → Link a Device
+4. Scan the QR code
+5. Once logged in, you can start sending messages
 
-## Important Notes
+### Features
+- ✅ Persistent login (scan QR code only once)
+- ✅ Visual GUI with progress tracking
+- ✅ Upload CSV/Excel contacts
+- ✅ Customizable message templates with placeholders
+- ✅ Export send reports to CSV
+- ✅ Configurable delays to avoid rate limiting
 
-### QR Code Scanning
-- On Streamlit Cloud, you need to scan the QR code **every time** you use the app
-- The Chrome profile doesn't persist between sessions
-- The QR code will appear directly in the Streamlit interface
+---
 
-### Limitations
-- Each session requires fresh WhatsApp login (QR scan)
-- Rate limiting: WhatsApp may block if you send too many messages too quickly
-- Cloud sessions have timeout limits
+## 📱 How to Use
 
-### Best Practices
-- Test with a small batch first (5-10 contacts)
-- Use inter-message delay of at least 5 seconds
-- Don't send identical messages to avoid spam detection
-- Use personalization variables like {name}
+### 1. Prepare Your Contacts File
+Create a CSV or Excel file with these columns:
+- `mobile` - Phone number (with or without country code)
+- `name` - Contact name
+- `clinic_name` - Business name
+- `location` - City/area
 
-## Troubleshooting
-
-### "WebDriver unexpectedly exited" Error
-- Fixed by the `packages.txt` file
-- Ensure Chromium is installed on cloud
-
-### QR Code Not Appearing
-- Wait 10-15 seconds after clicking Send
-- Refresh the page if stuck
-- Check app logs for errors
-
-### Messages Not Sending
-- Verify phone numbers include country code
-- Check CSV format matches requirements
-- Ensure WhatsApp Web is not blocked in your region
-
-## Local Development
-
-To run locally:
-```bash
-streamlit run app.py
+Example:
+```csv
+mobile,name,clinic_name,location
+9876543210,Dr. Sharma,City Clinic,Mumbai
++919123456789,Dr. Patel,Health Center,Delhi
 ```
 
-Local mode will:
-- Open Chrome window (not headless)
-- Use persistent Chrome profile
-- Keep you logged in between sessions
+### 2. Write Your Message Template
+Use placeholders that match your column names:
+```
+Hi {name},
+
+I came across {clinic_name} in {location} and wanted to reach out.
+
+We help clinics grow through digital marketing. Would love to connect!
+
+— Aurasutra Team
+```
+
+### 3. Configure Settings
+- **Country Code**: Auto-prepends to 10-digit numbers
+- **Wait Time**: Seconds to wait for each chat to load (30 recommended)
+- **Delay Between Messages**: Pause between sends (5+ seconds recommended)
+
+### 4. Send Messages
+1. Click "Upload Contacts"
+2. Preview your message
+3. Click "SEND TO ALL CONTACTS"
+4. Keep Chrome window visible (don't minimize)
+
+---
+
+## ⚠️ Best Practices
+
+### Avoid Getting Blocked
+- Start with small batches (10-20 contacts)
+- Use 5-10 second delays between messages
+- Personalize messages with {name}, {clinic_name}, etc.
+- Don't send identical messages repeatedly
+- Space out campaigns over multiple days
+
+### Rate Limits
+WhatsApp may temporarily block sending if you:
+- Send too many messages too fast
+- Send to invalid numbers repeatedly
+- Get reported as spam
+
+---
+
+## 🔧 Troubleshooting
+
+### "Chrome already in use" Error
+- Close all Chrome windows
+- Delete lock files: `chrome_profile/SingletonLock`
+- Restart the app
+
+### QR Code Not Loading
+- Ensure you have stable internet
+- Clear `chrome_profile` folder and restart
+- Wait longer (up to 30 seconds)
+
+### Messages Not Sending
+- Verify phone number format
+- Check that WhatsApp is still logged in
+- Ensure Chrome window is not minimized
+
+### "Invalid number" Error
+- Ensure number has correct country code
+- Remove spaces, dashes, or special characters
+- Use 10+ digits
+
+---
+
+## 📁 Project Files
+
+```
+├── desktop_app.py      # Desktop GUI application (USE THIS)
+├── app.py              # Streamlit app (for local testing only)
+├── whatsapp_sender.py  # WhatsApp automation logic
+├── utils.py            # Helper functions
+├── config.json         # Saved settings
+├── chrome_profile/     # Persistent Chrome session (keeps you logged in)
+├── sample_contacts.csv # Sample contact file
+└── requirements.txt    # Python dependencies
+```
+
+---
+
+## 🔄 Alternative: WhatsApp Business API
+
+For high-volume, reliable messaging without browser automation:
+- Use official **WhatsApp Business API** via providers like:
+  - Twilio
+  - MessageBird
+  - Gupshup
+  - Meta Business Suite
+
+These cost money but work reliably at scale without risk of being blocked.

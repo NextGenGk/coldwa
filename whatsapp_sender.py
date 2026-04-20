@@ -1,7 +1,12 @@
+"""
+WhatsApp Sender - Local Desktop Version
+This module handles WhatsApp Web automation using Selenium.
+IMPORTANT: This only works on local machines, NOT on cloud servers.
+"""
+
 import os
 import time
 import urllib.parse
-import platform
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -15,10 +20,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 from utils import format_phone_number, substitute_template
 
 PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile")
-
-def _is_streamlit_cloud():
-    """Detect Streamlit Cloud environment."""
-    return os.path.exists('/mount/src')
 
 
 _MSG_SELECTORS = [
@@ -61,69 +62,37 @@ def _clear_chrome_locks(profile_dir):
 
 
 def _build_driver() -> webdriver.Chrome:
-    import shutil
+    """
+    Build and configure Chrome WebDriver for local WhatsApp Web automation.
+    Uses a persistent profile to maintain WhatsApp login session.
+    """
     options = Options()
-    is_cloud = _is_streamlit_cloud()
-
-    if is_cloud:
-        # Auto-detect chromium binary
-        chrome_bin = (
-            shutil.which('chromium') or
-            shutil.which('chromium-browser') or
-            shutil.which('google-chrome')
-        )
-        if chrome_bin:
-            options.binary_location = chrome_bin
-
-        # Memory-reduced flags (no --single-process or --no-zygote — they crash newer Chrome)
-        cloud_args = [
-            '--headless',
-            '--no-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-extensions',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-sync',
-            '--disable-translate',
-            '--no-first-run',
-            '--mute-audio',
-            '--hide-scrollbars',
-            '--window-size=1280,720',
-            '--shm-size=512m',
-        ]
-        for arg in cloud_args:
-            options.add_argument(arg)
-
-        # Re-enable images to ensure QR code is captured
-        # Use a unique temp profile per run to avoid conflicts
-        import uuid
-        temp_profile = f"/tmp/chrome_profile_{uuid.uuid4()}"
-        os.makedirs(temp_profile, exist_ok=True)
-        options.add_argument(f"--user-data-dir={temp_profile}")
-
-    else:
-        # Local configuration
-        _clear_chrome_locks(PROFILE_DIR)
-        options.add_argument(f"--user-data-dir={PROFILE_DIR}")
-        options.add_argument("--profile-directory=Default")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+    
+    # Clear any stale locks from previous sessions
+    _clear_chrome_locks(PROFILE_DIR)
+    
+    # Use persistent profile to keep WhatsApp logged in
+    options.add_argument(f"--user-data-dir={PROFILE_DIR}")
+    options.add_argument("--profile-directory=Default")
+    
+    # Stability options
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    # Hide automation indicators
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    
+    # Keep browser open and visible (required for WhatsApp Web)
+    options.add_argument("--start-maximized")
 
     try:
-        if is_cloud:
-            chromedriver_bin = shutil.which('chromedriver') or '/usr/bin/chromedriver'
-            service = Service(chromedriver_bin)
-            driver = webdriver.Chrome(service=service, options=options)
-        else:
-            driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
-                options=options,
-            )
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()),
+            options=options,
+        )
     except Exception as e:
         err = str(e)
         if "user data directory is already in use" in err.lower():
@@ -133,20 +102,15 @@ def _build_driver() -> webdriver.Chrome:
             ) from e
         raise RuntimeError(f"Failed to start Chrome: {err}") from e
 
-    if not is_cloud:
-        driver.maximize_window()
-
     return driver
 
 
 def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=None, status_cb=None):
     """
     Wait until WhatsApp Web is fully logged in.
-    Continuously captures and updates QR code screenshot for the UI.
+    The user should scan the QR code displayed in the Chrome window.
     """
-    screenshot_path = "/tmp/whatsapp_qr.png" if _is_streamlit_cloud() else os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "wa_qr.png"
-    )
+    screenshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wa_qr.png")
 
     deadline = time.time() + timeout
     qr_shown = False
@@ -166,9 +130,9 @@ def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=No
                     qr_callback(screenshot_path)
                 
                 if not qr_shown:
-                    print(f"DEBUG: Starting screenshot stream. Check the app UI.")
+                    print("DEBUG: Waiting for QR code scan. Check the Chrome window.")
                     if status_cb:
-                        status_cb("📱 Look at the image below — Scan the QR code when it appears.")
+                        status_cb("📱 Scan the QR code in the Chrome window with your WhatsApp app")
                     qr_shown = True
             except Exception as e:
                 print(f"DEBUG: Failed to capture fallback screenshot: {e}")
@@ -189,8 +153,8 @@ def _wait_for_login(driver: webdriver.Chrome, timeout: int = 180, qr_callback=No
             err_lower = str(e).lower()
             if any(k in err_lower for k in ("invalid session", "no such session", "session not created")):
                 raise RuntimeError(
-                    "Chrome crashed (likely out of memory on the cloud server). "
-                    "Please wait a moment and try sending again."
+                    "Chrome session ended unexpectedly. "
+                    "Please close any other Chrome windows and try again."
                 ) from e
             # Other transient errors — keep waiting
             time.sleep(2)
